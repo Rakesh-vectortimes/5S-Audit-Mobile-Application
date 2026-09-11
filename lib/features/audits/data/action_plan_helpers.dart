@@ -68,6 +68,37 @@ bool isActionPlanComplete({
   return notes.isNotEmpty && assignees.isNotEmpty;
 }
 
+/// Prefills notes/assignees from question settings without overwriting user input.
+ActionPlanAnswer buildActionPlanWithDefaults({
+  ActionPlanAnswer? existing,
+  FiveSAuditQuestionActionPlan? config,
+}) {
+  final defaultNotes = (config?.defaultValue ?? '').trim();
+  final defaultAssigneeIds = config?.defaultAssigneeIds ?? const <String>[];
+  final defaultAssigneeNames = config?.defaultAssigneeNames ?? const <String>[];
+
+  if (existing == null) {
+    return ActionPlanAnswer(
+      notes: defaultNotes,
+      assigneeIds: defaultAssigneeIds,
+      assigneeNames: defaultAssigneeNames,
+    );
+  }
+
+  final notes = existing.notes.trim().isEmpty ? defaultNotes : existing.notes;
+  final assigneeIds =
+      existing.assigneeIds.isEmpty ? defaultAssigneeIds : existing.assigneeIds;
+  final assigneeNames = existing.assigneeNames.isEmpty
+      ? defaultAssigneeNames
+      : existing.assigneeNames;
+
+  return existing.copyWith(
+    notes: notes,
+    assigneeIds: assigneeIds,
+    assigneeNames: assigneeNames,
+  );
+}
+
 String gradeForScore({
   required num totalScore,
   required num maxScore,

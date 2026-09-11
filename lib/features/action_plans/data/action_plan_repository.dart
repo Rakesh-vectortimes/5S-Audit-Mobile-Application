@@ -166,24 +166,64 @@ class ActionPlanRepository {
     }
   }
 
+  /// Upload proof image(s) for an existing action plan (appends on server).
   Future<ActionPlanProofImage> uploadProofImage({
     required String id,
     required String filePath,
     String? fileName,
   }) async {
+    final images = await uploadProofImages(
+      planId: id,
+      files: [
+        ProofImageUploadFile(path: filePath, fileName: fileName),
+      ],
+    );
+    if (images.isEmpty) {
+      throw ApiException('Failed to upload proof image');
+    }
+    return images.first;
+  }
+
+  /// Upload one or more proof images.
+  ///
+  /// - During audit edit (no plan id): pass [companyId]
+  /// - Existing plan: pass [planId] (optionally [companyId])
+  Future<List<ActionPlanProofImage>> uploadProofImages({
+    String? planId,
+    String? companyId,
+    required List<ProofImageUploadFile> files,
+  }) async {
+    if (files.isEmpty) return const [];
+    final hasPlan = planId != null && planId.isNotEmpty;
+    final hasCompany = companyId != null && companyId.isNotEmpty;
+    if (!hasPlan && !hasCompany) {
+      throw ApiException('company_id is required to upload proof images');
+    }
+
     try {
-      final formData = FormData.fromMap({
-        'image': await MultipartFile.fromFile(
-          filePath,
-          filename: fileName,
-        ),
-      });
+      final formData = FormData();
+      for (final file in files) {
+        formData.files.add(
+          MapEntry(
+            'images',
+            await MultipartFile.fromFile(
+              file.path,
+              filename: file.fileName,
+            ),
+          ),
+        );
+      }
+
+      final path = hasPlan
+          ? '/5s-audit-action-plans/$planId/proof-image'
+          : '/5s-audit-action-plans/proof-image';
       final response = await dio.post<dynamic>(
-        '/5s-audit-action-plans/$id/proof-image',
+        path,
         data: formData,
+        queryParameters: hasCompany ? {'company_id': companyId} : null,
       );
       final envelope = ApiResponse.fromDioData<dynamic>(response.data, null);
-      if (!envelope.success || envelope.data is! Map) {
+      if (!envelope.success) {
         throw ApiException(
           envelope.message.isNotEmpty
               ? envelope.message
@@ -191,9 +231,7 @@ class ActionPlanRepository {
           statusCode: response.statusCode,
         );
       }
-      return ActionPlanProofImage.fromJson(
-        Map<String, dynamic>.from(envelope.data as Map),
-      );
+      return parseProofImageUploadResponse(envelope.data);
     } on DioException catch (e) {
       throw ApiException(
         ApiException.messageFromBody(
@@ -262,3 +300,47 @@ class ActionPlanRepository {
 final actionPlanRepositoryProvider = Provider<ActionPlanRepository>((ref) {
   return ActionPlanRepository(ref.watch(dioProvider));
 });
+
+class ProofImageUploadFile {
+  const ProofImageUploadFile({
+    required this.path,
+    this.fileName,
+    this.mimeType,
+    this.sizeBytes,
+  });
+
+  final String path;
+  final String? fileName;
+  final String? mimeType;
+  final int? sizeBytes;
+}
+
+List<ActionPlanProofImage> parseProofImageUploadResponse(dynamic data) {
+  if (data == null) return const [];
+
+  List<ActionPlanProofImage> fromList(List<dynamic> list) {
+    return list
+        .whereType<Object>()
+        .map((e) => ActionPlanProofImage.fromJson(
+              e is Map<String, dynamic>
+                  ? e
+                  : Map<String, dynamic>.from(e as Map),
+            ))
+        .toList();
+  }
+
+  if (data is List) return fromList(data);
+  if (data is! Map) return const [];
+
+  final map = Map<String, dynamic>.from(data);
+  final images = map['images'] ?? map['proof_images'];
+  if (images is List) return fromList(images);
+
+  if (map.containsKey('uploadurl') ||
+      map.containsKey('upload_url') ||
+      map.containsKey('image_url') ||
+      map.containsKey('file_name')) {
+    return [ActionPlanProofImage.fromJson(map)];
+  }
+  return const [];
+}

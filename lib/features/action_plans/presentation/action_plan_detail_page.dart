@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/network/image_url.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/action_plan_utils.dart';
 import '../data/models/action_plan_models.dart';
@@ -265,19 +266,54 @@ class _ActionPlanDetailPageState extends ConsumerState<ActionPlanDetailPage> {
       );
       return;
     }
-    final file = await _picker.pickImage(source: source, imageQuality: 85);
-    if (file == null) return;
-    final bytes = await file.length();
-    final mime = _guessMime(file.path, file.mimeType);
-    final error = await controller.uploadProof(
-      filePath: file.path,
-      fileName: file.name,
-      mimeType: mime,
-      sizeBytes: bytes,
-    );
-    if (!mounted) return;
-    if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+
+    final currentCount =
+        ref.read(actionPlanDetailControllerProvider(widget.planId)).proofImages.length;
+    final remaining = maxProofImagesPerActionPlan - currentCount;
+    if (remaining <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('You can upload up to $maxProofImagesPerActionPlan images.'),
+        ),
+      );
+      return;
+    }
+
+    final pickerFiles = <({String path, String? name, String? mime, int size})>[];
+    if (source == ImageSource.gallery) {
+      final picked = await _picker.pickMultiImage(imageQuality: 85);
+      for (final file in picked.take(remaining)) {
+        pickerFiles.add((
+          path: file.path,
+          name: file.name,
+          mime: _guessMime(file.path, file.mimeType),
+          size: await file.length(),
+        ));
+      }
+    } else {
+      final file = await _picker.pickImage(source: source, imageQuality: 85);
+      if (file != null) {
+        pickerFiles.add((
+          path: file.path,
+          name: file.name,
+          mime: _guessMime(file.path, file.mimeType),
+          size: await file.length(),
+        ));
+      }
+    }
+
+    for (final file in pickerFiles) {
+      final error = await controller.uploadProof(
+        filePath: file.path,
+        fileName: file.name,
+        mimeType: file.mime,
+        sizeBytes: file.size,
+      );
+      if (!mounted) return;
+      if (error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+        break;
+      }
     }
   }
 

@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/theme/app_theme.dart';
@@ -8,6 +11,8 @@ import '../../../shared/widgets/audit_pickers.dart';
 import '../../../shared/widgets/location_and_assignee_pickers.dart';
 import '../../../shared/widgets/org_pickers.dart';
 import '../../../shared/widgets/signature_pad.dart';
+import '../../action_plans/data/action_plan_repository.dart';
+import '../../action_plans/data/models/action_plan_models.dart';
 import '../../five_s_config/data/models/five_s_config_models.dart';
 import '../../five_s_config/domain/section_hierarchy.dart';
 import '../../five_s_config/presentation/five_s_audit_config_controller.dart';
@@ -24,16 +29,21 @@ class AssessmentFormPage extends ConsumerStatefulWidget {
   ConsumerState<AssessmentFormPage> createState() => _AssessmentFormPageState();
 }
 
-class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage> {
+class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage>
+    with WidgetsBindingObserver {
   final _pageController = PageController();
   int _stepIndex = 0;
   final _signatureKey = GlobalKey<SignaturePadState>();
+  bool _completed = false;
+  bool _leaving = false;
+  bool _autoSaving = false;
 
   bool get _isEdit => widget.assessmentId != null && widget.assessmentId!.isNotEmpty;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final controller = ref.read(assessmentFormControllerProvider.notifier);
       if (_isEdit) {
@@ -46,8 +56,18 @@ class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Save when the app is backgrounded or about to be killed.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(_autoSaveInBackground());
+    }
   }
 
   List<_FormStep> _steps(List<AssessmentStep> assessmentSteps) {
@@ -114,21 +134,60 @@ class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage> {
     await _goTo(_stepIndex + 1, steps.length);
   }
 
+  Future<void> _autoSaveInBackground() async {
+    if (_completed || _leaving || _autoSaving || !mounted) return;
+    _autoSaving = true;
+    try {
+      await ref
+          .read(assessmentFormControllerProvider.notifier)
+          .autoSaveDraftIfPossible();
+    } catch (_) {
+      // Best-effort; ignore failures when backgrounding.
+    } finally {
+      _autoSaving = false;
+    }
+  }
+
+  Future<void> _leaveAfterDraftSave({required bool showMessage}) async {
+    if (_completed || _leaving) return;
+    _leaving = true;
+    var saved = false;
+    try {
+      saved = await ref
+          .read(assessmentFormControllerProvider.notifier)
+          .autoSaveDraftIfPossible();
+    } catch (_) {
+      saved = false;
+    }
+    _completed = true;
+    if (!mounted) return;
+    if (saved && showMessage) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Draft saved. You can continue later.')),
+      );
+    }
+    context.pop(saved);
+  }
+
   Future<void> _saveDraft() async {
-    final record = await ref.read(assessmentFormControllerProvider.notifier).saveDraft();
+    final record =
+        await ref.read(assessmentFormControllerProvider.notifier).saveDraft();
     if (!mounted) return;
     if (record != null) {
+      _completed = true;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Draft saved')),
+        const SnackBar(content: Text('Draft saved. You can continue later.')),
       );
       context.pop(true);
     }
   }
 
   Future<void> _submit() async {
-    final record = await ref.read(assessmentFormControllerProvider.notifier).submit();
+    final record =
+        await ref.read(assessmentFormControllerProvider.notifier).submit();
     if (!mounted) return;
     if (record != null) {
+      _completed = true;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Audit submitted')),
       );
@@ -145,122 +204,138 @@ class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage> {
     final configError = config.errorMessage;
     final configLoading = config.status == FiveSConfigStatus.loading;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_isEdit ? 'Edit audit' : 'New audit'),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(28),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Step ${_stepIndex + 1}/${steps.length}: ${current.title}',
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop || _completed) return;
+        await _leaveAfterDraftSave(showMessage: true);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(_isEdit ? 'Edit audit' : 'New audit'),
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(28),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Step ${_stepIndex + 1}/${steps.length}: ${current.title}',
+                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                  ),
+                  Text(
+                    '${((_stepIndex + 1) / steps.length * 100).round()}%',
                     style: const TextStyle(color: Colors.white70, fontSize: 13),
                   ),
-                ),
-                Text(
-                  '${((_stepIndex + 1) / steps.length * 100).round()}%',
-                  style: const TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
-      ),
-      body: form.loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                if (form.errorMessage != null)
-                  _FormBanner(message: form.errorMessage!, isError: true),
-                if (configLoading)
-                  const _FormBanner(message: 'Loading audit questions…'),
-                if (!configLoading && configError != null)
-                  _FormBanner(message: configError, isError: true),
-                Expanded(
-                  child: PageView.builder(
-                    controller: _pageController,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: steps.length,
-                    onPageChanged: (i) => setState(() => _stepIndex = i),
-                    itemBuilder: (context, index) {
-                      final step = steps[index];
-                      switch (step.kind) {
-                        case _StepKind.details:
-                          return _DetailsStep(
-                            form: form,
-                            onPickDate: _pickDate,
-                          );
-                        case _StepKind.questions:
-                          return _QuestionsStep(
-                            assessmentStep: step.assessmentStep!,
-                            form: form,
-                            config: config,
-                          );
-                        case _StepKind.review:
-                          return _ReviewStep(
-                            form: form,
-                            config: config,
-                            signatureKey: _signatureKey,
-                          );
-                      }
-                    },
+        body: form.loading
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                children: [
+                  if (form.errorMessage != null)
+                    _FormBanner(message: form.errorMessage!, isError: true),
+                  if (configLoading)
+                    const _FormBanner(message: 'Loading audit questions…'),
+                  if (!configLoading && configError != null)
+                    _FormBanner(message: configError, isError: true),
+                  Expanded(
+                    child: PageView.builder(
+                      controller: _pageController,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: steps.length,
+                      onPageChanged: (i) => setState(() => _stepIndex = i),
+                      itemBuilder: (context, index) {
+                        final step = steps[index];
+                        switch (step.kind) {
+                          case _StepKind.details:
+                            return _DetailsStep(
+                              form: form,
+                              onPickDate: _pickDate,
+                            );
+                          case _StepKind.questions:
+                            return _QuestionsStep(
+                              assessmentStep: step.assessmentStep!,
+                              form: form,
+                              config: config,
+                            );
+                          case _StepKind.review:
+                            return _ReviewStep(
+                              form: form,
+                              config: config,
+                              signatureKey: _signatureKey,
+                            );
+                        }
+                      },
+                    ),
                   ),
-                ),
-                SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                    child: Row(
-                      children: [
-                        if (_stepIndex > 0)
-                          OutlinedButton(
-                            onPressed: form.saving
-                                ? null
-                                : () => _goTo(_stepIndex - 1, steps.length),
-                            child: const Text('Back'),
-                          ),
-                        const Spacer(),
-                        if (_stepIndex < steps.length - 1)
-                          FilledButton(
-                            style: FilledButton.styleFrom(
-                              minimumSize: const Size(88, 48),
+                  SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                      child: Row(
+                        children: [
+                          if (_stepIndex > 0)
+                            OutlinedButton(
+                              onPressed: form.saving
+                                  ? null
+                                  : () => _goTo(_stepIndex - 1, steps.length),
+                              child: const Text('Back'),
                             ),
+                          const Spacer(),
+                          OutlinedButton(
                             onPressed: form.saving || configLoading
                                 ? null
-                                : _goNext,
-                            child: const Text('Next'),
-                          )
-                        else ...[
-                          OutlinedButton(
-                            onPressed: form.saving ? null : _saveDraft,
-                            child: const Text('Save draft'),
-                          ),
-                          const SizedBox(width: 8),
-                          FilledButton(
-                            style: FilledButton.styleFrom(
-                              minimumSize: const Size(88, 48),
-                            ),
-                            onPressed: form.saving ? null : _submit,
+                                : _saveDraft,
                             child: form.saving
                                 ? const SizedBox(
                                     width: 18,
                                     height: 18,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      color: Colors.white,
                                     ),
                                   )
-                                : const Text('Submit'),
+                                : const Text('Save'),
                           ),
+                          const SizedBox(width: 8),
+                          if (_stepIndex < steps.length - 1)
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size(88, 48),
+                              ),
+                              onPressed: form.saving || configLoading
+                                  ? null
+                                  : _goNext,
+                              child: const Text('Next'),
+                            )
+                          else
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size(88, 48),
+                              ),
+                              onPressed: form.saving ? null : _submit,
+                              child: form.saving
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Text('Submit'),
+                            ),
                         ],
-                      ],
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
+      ),
     );
   }
 }
@@ -373,7 +448,9 @@ class _DetailsStep extends ConsumerWidget {
           style: Theme.of(context).textTheme.titleLarge,
         ),
         const SizedBox(height: 8),
+        // Key forces fields to rebuild when company details are fetched.
         TextFormField(
+          key: ValueKey('workforce-${form.company?.id}-${form.background.totalWorkforce}'),
           initialValue: '${form.background.totalWorkforce ?? ''}',
           decoration: const InputDecoration(labelText: 'Workforce'),
           keyboardType: TextInputType.number,
@@ -383,6 +460,7 @@ class _DetailsStep extends ConsumerWidget {
         ),
         const SizedBox(height: 10),
         TextFormField(
+          key: ValueKey('shifts-${form.company?.id}-${form.background.shiftOperation}'),
           initialValue: '${form.background.shiftOperation ?? ''}',
           decoration: const InputDecoration(labelText: 'Shifts'),
           onChanged: (v) => controller.updateBackground(
@@ -391,6 +469,7 @@ class _DetailsStep extends ConsumerWidget {
         ),
         const SizedBox(height: 10),
         TextFormField(
+          key: ValueKey('hours-${form.company?.id}-${form.background.workingHours}'),
           initialValue: form.background.workingHours ?? '',
           decoration: const InputDecoration(labelText: 'Working hours'),
           onChanged: (v) => controller.updateBackground(
@@ -399,6 +478,7 @@ class _DetailsStep extends ConsumerWidget {
         ),
         const SizedBox(height: 10),
         TextFormField(
+          key: ValueKey('days-${form.company?.id}-${form.background.workingDays}'),
           initialValue: '${form.background.workingDays ?? ''}',
           decoration: const InputDecoration(labelText: 'Working days'),
           onChanged: (v) => controller.updateBackground(
@@ -512,12 +592,20 @@ class _QuestionsStep extends ConsumerWidget {
                       const Text('Action plan', style: TextStyle(fontWeight: FontWeight.w600)),
                       const SizedBox(height: 6),
                       TextFormField(
+                        key: ValueKey('ap-notes-${q.id}-${response?.optionIndex}'),
                         initialValue: response?.actionPlan?.notes ?? '',
-                        decoration: const InputDecoration(labelText: 'Notes *'),
-                        maxLines: 2,
+                        decoration: const InputDecoration(
+                          labelText: 'Notes *',
+                          alignLabelWithHint: true,
+                        ),
+                        maxLines: 4,
                         onChanged: (v) {
-                          final current = response?.actionPlan ?? const ActionPlanAnswer();
-                          controller.setActionPlan(q.id, current.copyWith(notes: v));
+                          final current =
+                              response?.actionPlan ?? const ActionPlanAnswer();
+                          controller.setActionPlan(
+                            q.id,
+                            current.copyWith(notes: v),
+                          );
                         },
                       ),
                       const SizedBox(height: 8),
@@ -565,6 +653,13 @@ class _QuestionsStep extends ConsumerWidget {
                           ),
                         ),
                       ),
+                      const SizedBox(height: 10),
+                      _ActionPlanProofImages(
+                        questionId: q.id,
+                        images: response?.actionPlan?.proofImages ?? const [],
+                        uploading:
+                            form.uploadingProofQuestionId == q.id,
+                      ),
                     ],
                   ],
                 ),
@@ -573,6 +668,214 @@ class _QuestionsStep extends ConsumerWidget {
           }),
       ],
     );
+  }
+}
+
+class _ActionPlanProofImages extends ConsumerWidget {
+  const _ActionPlanProofImages({
+    required this.questionId,
+    required this.images,
+    required this.uploading,
+  });
+
+  final int questionId;
+  final List<ActionPlanProofImage> images;
+  final bool uploading;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final remaining = ActionPlanAnswer.maxProofImages - images.length;
+    final canAdd = remaining > 0 && !uploading;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Evidence images',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            Text(
+              '${images.length}/${ActionPlanAnswer.maxProofImages}',
+              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+            const SizedBox(width: 4),
+            if (uploading)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              PopupMenuButton<ImageSource>(
+                enabled: canAdd,
+                tooltip: canAdd
+                    ? 'Add images'
+                    : 'Maximum ${ActionPlanAnswer.maxProofImages} images',
+                onSelected: (source) => _pickAndUpload(context, ref, source),
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: ImageSource.camera,
+                    child: Text('Camera'),
+                  ),
+                  PopupMenuItem(
+                    value: ImageSource.gallery,
+                    child: Text('Gallery'),
+                  ),
+                ],
+                child: const Padding(
+                  padding: EdgeInsets.all(6),
+                  child: Icon(Icons.add_a_photo_outlined),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        if (images.isEmpty)
+          const Text(
+            'Add photos from camera or gallery (up to 10).',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          )
+        else
+          SizedBox(
+            height: 96,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: images.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final url = images[index].displayUrl;
+                return Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: url.isEmpty
+                          ? Container(
+                              width: 96,
+                              height: 96,
+                              color: AppColors.divider,
+                              child: const Icon(Icons.broken_image_outlined),
+                            )
+                          : Image.network(
+                              url,
+                              width: 96,
+                              height: 96,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                width: 96,
+                                height: 96,
+                                color: AppColors.divider,
+                                child: const Icon(Icons.broken_image_outlined),
+                              ),
+                            ),
+                    ),
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: IconButton(
+                        iconSize: 18,
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.black54,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.all(4),
+                          minimumSize: const Size(28, 28),
+                        ),
+                        onPressed: uploading
+                            ? null
+                            : () => ref
+                                .read(assessmentFormControllerProvider.notifier)
+                                .removeActionPlanProofImage(questionId, index),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            OutlinedButton.icon(
+              onPressed: canAdd
+                  ? () => _pickAndUpload(context, ref, ImageSource.camera)
+                  : null,
+              icon: const Icon(Icons.photo_camera_outlined, size: 18),
+              label: const Text('Camera'),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: canAdd
+                  ? () => _pickAndUpload(context, ref, ImageSource.gallery)
+                  : null,
+              icon: const Icon(Icons.photo_library_outlined, size: 18),
+              label: const Text('Gallery'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pickAndUpload(
+    BuildContext context,
+    WidgetRef ref,
+    ImageSource source,
+  ) async {
+    final picker = ImagePicker();
+    final remaining = ActionPlanAnswer.maxProofImages - images.length;
+    if (remaining <= 0) return;
+
+    final files = <ProofImageUploadFile>[];
+    if (source == ImageSource.gallery) {
+      final picked = await picker.pickMultiImage(imageQuality: 85);
+      for (final file in picked.take(remaining)) {
+        final bytes = await file.length();
+        files.add(
+          ProofImageUploadFile(
+            path: file.path,
+            fileName: file.name,
+            mimeType: _guessMime(file.path, file.mimeType),
+            sizeBytes: bytes,
+          ),
+        );
+      }
+    } else {
+      final file = await picker.pickImage(source: source, imageQuality: 85);
+      if (file != null) {
+        final bytes = await file.length();
+        files.add(
+          ProofImageUploadFile(
+            path: file.path,
+            fileName: file.name,
+            mimeType: _guessMime(file.path, file.mimeType),
+            sizeBytes: bytes,
+          ),
+        );
+      }
+    }
+
+    if (files.isEmpty) return;
+    final error = await ref
+        .read(assessmentFormControllerProvider.notifier)
+        .uploadActionPlanProofImages(questionId: questionId, files: files);
+    if (!context.mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
+
+  String? _guessMime(String path, String? mimeType) {
+    if (mimeType != null && mimeType.isNotEmpty) return mimeType;
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    return 'image/jpeg';
   }
 }
 

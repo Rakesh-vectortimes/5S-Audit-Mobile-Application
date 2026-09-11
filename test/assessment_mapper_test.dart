@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:five_s_audit/core/constants/audit_status.dart';
+import 'package:five_s_audit/features/action_plans/data/models/action_plan_models.dart';
 import 'package:five_s_audit/features/audits/data/five_s_audit_mapper.dart';
 import 'package:five_s_audit/features/audits/data/models/assessment_models.dart';
 import 'package:five_s_audit/features/five_s_config/data/models/five_s_config_models.dart';
@@ -106,6 +107,29 @@ void main() {
         isTrue,
       );
       expect(const ActionPlanAnswer(notes: 'nhz').toJson()['completed'], isFalse);
+    });
+
+    test('includes proof_images metadata on action plan save payload', () {
+      final plan = ActionPlanAnswer(
+        notes: 'train',
+        assigneeIds: const ['u1'],
+        proofImages: [
+          ActionPlanProofImage(
+            fileName: 'photo.jpg',
+            uploadUrl: 'public/c1/uploads/photo.jpg',
+            fileType: 'image/jpeg',
+            fileSize: 12345,
+            imageUrl: '/public/c1/uploads/photo.jpg',
+            capturedAt: '2026-09-11T10:00:00.000Z',
+          ),
+        ],
+      );
+      final json = plan.toJson();
+      final images = json['proof_images'] as List;
+      expect(images, hasLength(1));
+      expect(images.first['file_name'], 'photo.jpg');
+      expect(images.first['uploadurl'], 'public/c1/uploads/photo.jpg');
+      expect(images.first['image_url'], '/public/c1/uploads/photo.jpg');
     });
   });
 }

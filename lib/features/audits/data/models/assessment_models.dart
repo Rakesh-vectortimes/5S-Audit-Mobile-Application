@@ -2,6 +2,7 @@ import 'package:equatable/equatable.dart';
 
 import '../../../../core/constants/audit_status.dart';
 import '../../../../core/network/list_response.dart';
+import '../../../action_plans/data/models/action_plan_models.dart';
 
 class CompanyBackground extends Equatable {
   const CompanyBackground({
@@ -103,7 +104,10 @@ class ActionPlanAnswer extends Equatable {
     this.priority = 'medium',
     this.dueDate = '',
     this.completed = false,
+    this.proofImages = const [],
   });
+
+  static const maxProofImages = 10;
 
   final String notes;
   final List<String> assigneeIds;
@@ -113,18 +117,33 @@ class ActionPlanAnswer extends Equatable {
   final String priority;
   final String dueDate;
   final bool completed;
+  final List<ActionPlanProofImage> proofImages;
 
   bool get hasAssignees =>
       assigneeIds.isNotEmpty || (assigneeId != null && assigneeId!.isNotEmpty);
 
   bool get isFilled => notes.trim().isNotEmpty && hasAssignees;
 
-  bool get hasContent => completed || isFilled;
+  bool get hasContent => completed || isFilled || proofImages.isNotEmpty;
+
+  int get remainingProofSlots =>
+      (maxProofImages - proofImages.length).clamp(0, maxProofImages);
 
   factory ActionPlanAnswer.fromJson(Map<String, dynamic>? json) {
     if (json == null) return const ActionPlanAnswer();
     final ids = _normalizeAssigneeIds(json['assignee_ids'], json['assignee_id']);
     final names = _normalizeAssigneeNames(json['assignee_names'], json['assignee_name']);
+    final proofRaw = json['proof_images'] ?? json['images'];
+    final proofImages = proofRaw is List
+        ? proofRaw
+            .whereType<Object>()
+            .map((e) => ActionPlanProofImage.fromJson(
+                  e is Map<String, dynamic>
+                      ? e
+                      : Map<String, dynamic>.from(e as Map),
+                ))
+            .toList()
+        : const <ActionPlanProofImage>[];
     return ActionPlanAnswer(
       notes: (json['notes'] as String?)?.trim() ?? '',
       assigneeIds: ids,
@@ -136,6 +155,7 @@ class ActionPlanAnswer extends Equatable {
           : 'medium',
       dueDate: (json['due_date'] as String?)?.trim() ?? '',
       completed: json['completed'] == true,
+      proofImages: proofImages,
     );
   }
 
@@ -158,6 +178,10 @@ class ActionPlanAnswer extends Equatable {
       if (dueDate.trim().isNotEmpty) 'due_date': dueDate.trim(),
       // Backend publish check: action_plan.completed == true (not notes/assignees).
       'completed': completed || isFilled,
+      'proof_images': proofImages
+          .where((p) => (p.uploadUrl ?? '').isNotEmpty || (p.imageUrl ?? '').isNotEmpty)
+          .map((p) => p.toUploadJson())
+          .toList(),
     };
   }
 
@@ -170,6 +194,7 @@ class ActionPlanAnswer extends Equatable {
     String? priority,
     String? dueDate,
     bool? completed,
+    List<ActionPlanProofImage>? proofImages,
   }) {
     return ActionPlanAnswer(
       notes: notes ?? this.notes,
@@ -180,11 +205,13 @@ class ActionPlanAnswer extends Equatable {
       priority: priority ?? this.priority,
       dueDate: dueDate ?? this.dueDate,
       completed: completed ?? this.completed,
+      proofImages: proofImages ?? this.proofImages,
     );
   }
 
   @override
-  List<Object?> get props => [notes, assigneeIds, priority, dueDate, completed];
+  List<Object?> get props =>
+      [notes, assigneeIds, priority, dueDate, completed, proofImages];
 }
 
 class AssessmentResponse extends Equatable {

@@ -181,19 +181,36 @@ class FiveSAuditQuestionActionPlan extends Equatable {
   final String? defaultValue;
 
   factory FiveSAuditQuestionActionPlan.fromJson(Map<String, dynamic> json) {
+    final defaultValue = _firstNonEmptyString([
+      json['default_value'],
+      json['default_notes'],
+      json['action_required'],
+    ]);
+    final triggerOptionIndexes = _asIntList(json['trigger_option_indexes']);
+    final triggerScores = _asIntList(json['trigger_scores']);
+    final enabledExplicit =
+        _asBool(json['enabled'] ?? json['action_plan_required']);
+    // Some API payloads omit `enabled` even when action-plan config is present.
+    final enabled = enabledExplicit ??
+        (triggerOptionIndexes.isNotEmpty ||
+            triggerScores.isNotEmpty ||
+            (defaultValue != null && defaultValue.isNotEmpty) ||
+            _asStringList(json['default_assignee_ids']).isNotEmpty);
+
     return FiveSAuditQuestionActionPlan(
-      enabled: json['enabled'] == true,
-      mandatory: json['mandatory'] == true,
+      enabled: enabled,
+      mandatory: _asBool(json['mandatory']) ?? false,
       defaultAssigneeIds: _asStringList(json['default_assignee_ids']),
       defaultAssigneeNames: _asStringList(json['default_assignee_names']),
-      triggerScores: _asIntList(json['trigger_scores']),
-      triggerOptionIndexes: _asIntList(json['trigger_option_indexes']),
-      defaultValue: json['default_value']?.toString(),
+      triggerScores: triggerScores,
+      triggerOptionIndexes: triggerOptionIndexes,
+      defaultValue: defaultValue,
     );
   }
 
   @override
-  List<Object?> get props => [enabled, mandatory, triggerOptionIndexes];
+  List<Object?> get props =>
+      [enabled, mandatory, triggerOptionIndexes, defaultValue];
 }
 
 class FiveSAuditQuestionImage extends Equatable {
@@ -403,6 +420,14 @@ List<String> _asStringList(Object? value) {
 List<int> _asIntList(Object? value) {
   if (value is! List) return const [];
   return value.map(_asInt).whereType<int>().toList();
+}
+
+String? _firstNonEmptyString(List<Object?> values) {
+  for (final value in values) {
+    final text = value?.toString().trim() ?? '';
+    if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
+  }
+  return null;
 }
 
 List<FiveSAuditQuestionItem> _parseQuestionItems(Object? raw) {

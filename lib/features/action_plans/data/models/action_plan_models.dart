@@ -52,6 +52,7 @@ class ActionPlanProofImage extends Equatable {
     this.fileType,
     this.fileSize,
     this.imageUrl,
+    this.capturedAt,
   });
 
   final String? fileName;
@@ -59,6 +60,7 @@ class ActionPlanProofImage extends Equatable {
   final String? fileType;
   final int? fileSize;
   final String? imageUrl;
+  final String? capturedAt;
 
   String get displayUrl => resolveMediaUrl({
         'image_url': imageUrl,
@@ -80,6 +82,7 @@ class ActionPlanProofImage extends Equatable {
       fileType: (json['file_type'] as String?)?.trim(),
       fileSize: json['file_size'] is num ? (json['file_size'] as num).toInt() : null,
       imageUrl: built.isEmpty ? null : built,
+      capturedAt: (json['captured_at'] as String?)?.trim(),
     );
   }
 
@@ -88,10 +91,12 @@ class ActionPlanProofImage extends Equatable {
         if (uploadUrl != null && uploadUrl!.isNotEmpty) 'uploadurl': uploadUrl,
         if (fileType != null && fileType!.isNotEmpty) 'file_type': fileType,
         if (fileSize != null) 'file_size': fileSize,
+        if (imageUrl != null && imageUrl!.isNotEmpty) 'image_url': imageUrl,
+        if (capturedAt != null && capturedAt!.isNotEmpty) 'captured_at': capturedAt,
       };
 
   @override
-  List<Object?> get props => [fileName, uploadUrl, imageUrl];
+  List<Object?> get props => [fileName, uploadUrl, imageUrl, capturedAt];
 }
 
 class ActionPlanRecord extends Equatable {

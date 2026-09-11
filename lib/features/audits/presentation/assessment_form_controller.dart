@@ -3,11 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/constants/audit_status.dart';
 import '../../../core/network/api_response.dart';
+import '../../../core/network/image_url.dart';
+import '../../action_plans/data/action_plan_repository.dart';
 import '../../action_plans/data/action_plan_settings_repository.dart';
 import '../../action_plans/data/action_plan_utils.dart';
 import '../../five_s_config/data/models/five_s_config_models.dart';
 import '../../five_s_config/presentation/five_s_audit_config_controller.dart';
 import '../../org/data/models/org_models.dart';
+import '../../org/data/org_repositories.dart';
 import '../data/action_plan_helpers.dart';
 import '../data/assessment_repository.dart';
 import '../data/five_s_audit_mapper.dart';
@@ -16,6 +19,7 @@ import '../data/models/assessment_models.dart';
 class AssessmentFormState extends Equatable {
   const AssessmentFormState({
     this.recordId,
+    this.status = AuditStatusMapper.draft,
     this.company,
     this.auditType,
     this.branch,
@@ -30,12 +34,14 @@ class AssessmentFormState extends Equatable {
     this.sign = false,
     this.loading = false,
     this.saving = false,
+    this.uploadingProofQuestionId,
     this.errorMessage,
     this.initialized = false,
     this.dueDaySettings = const ActionPlanDueDaySettings(),
   });
 
   final String? recordId;
+  final String status;
   final Company? company;
   final FiveSAuditType? auditType;
   final Branch? branch;
@@ -50,14 +56,20 @@ class AssessmentFormState extends Equatable {
   final bool sign;
   final bool loading;
   final bool saving;
+  final int? uploadingProofQuestionId;
   final String? errorMessage;
   final bool initialized;
   final ActionPlanDueDaySettings dueDaySettings;
 
   bool get isEdit => recordId != null && recordId!.isNotEmpty;
 
+  /// Auto-save only for in-progress drafts (never rewrite a submitted audit).
+  bool get canAutoSaveDraft =>
+      status == AuditStatusMapper.draft || status.isEmpty;
+
   AssessmentFormState copyWith({
     String? recordId,
+    String? status,
     Company? company,
     FiveSAuditType? auditType,
     Branch? branch,
@@ -72,6 +84,7 @@ class AssessmentFormState extends Equatable {
     bool? sign,
     bool? loading,
     bool? saving,
+    int? uploadingProofQuestionId,
     String? errorMessage,
     bool? initialized,
     ActionPlanDueDaySettings? dueDaySettings,
@@ -81,9 +94,11 @@ class AssessmentFormState extends Equatable {
     bool clearFloor = false,
     bool clearLocation = false,
     bool clearError = false,
+    bool clearUploadingProof = false,
   }) {
     return AssessmentFormState(
       recordId: recordId ?? this.recordId,
+      status: status ?? this.status,
       company: clearCompany ? null : (company ?? this.company),
       auditType: clearAuditType ? null : (auditType ?? this.auditType),
       branch: clearBranch ? null : (branch ?? this.branch),
@@ -98,6 +113,9 @@ class AssessmentFormState extends Equatable {
       sign: sign ?? this.sign,
       loading: loading ?? this.loading,
       saving: saving ?? this.saving,
+      uploadingProofQuestionId: clearUploadingProof
+          ? null
+          : (uploadingProofQuestionId ?? this.uploadingProofQuestionId),
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       initialized: initialized ?? this.initialized,
       dueDaySettings: dueDaySettings ?? this.dueDaySettings,
@@ -107,6 +125,7 @@ class AssessmentFormState extends Equatable {
   @override
   List<Object?> get props => [
         recordId,
+        status,
         company,
         auditType,
         branch,
@@ -121,6 +140,7 @@ class AssessmentFormState extends Equatable {
         sign,
         loading,
         saving,
+        uploadingProofQuestionId,
         errorMessage,
         initialized,
         dueDaySettings.highPriorityDueDays,
@@ -183,16 +203,20 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
       final responseMap = {
         for (final r in record.responses) r.questionId: r,
       };
+      final questions =
+          _ref.read(fiveSAuditConfigControllerProvider).flatQuestions;
+      final hydrated = _hydrateActionPlanDefaults(responseMap, questions);
 
       state = AssessmentFormState(
         recordId: record.id,
+        status: record.status,
         company: company,
         auditType: auditType,
         location: location,
         background: record.companyBackground ?? const CompanyBackground(),
         reportDate: record.reportDate ?? FiveSAuditMapper.formatApiDate(null),
         title: record.title ?? '',
-        responses: responseMap,
+        responses: hydrated,
         summary: record.summary,
         declarationSignature: record.declarationSignature ?? '',
         sign: record.sign,
@@ -234,6 +258,34 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
       dueDaySettings: const ActionPlanDueDaySettings(),
     );
     _ref.read(fiveSAuditConfigControllerProvider.notifier).invalidate();
+
+    if (company == null || company.id.isEmpty) return;
+
+    // List endpoint often omits background fields; fetch full company details.
+    try {
+      final detailed =
+          await _ref.read(companyRepositoryProvider).getById(company.id);
+      if (state.company?.id != company.id) return;
+      state = state.copyWith(
+        company: detailed,
+        background: CompanyBackground(
+          companyId: detailed.id,
+          companyName: detailed.companyName,
+          companyIntroduction: state.background.companyIntroduction ?? '',
+          location: state.background.location,
+          locationId: state.background.locationId,
+          totalWorkforce: detailed.totalWorkforce,
+          shiftOperation: detailed.shiftOperation,
+          workingHours: detailed.workingHours,
+          workingDays: detailed.workingDays,
+          currency: detailed.currency,
+          currencySymbol: detailed.currencySymbol,
+        ),
+        title: _deriveTitle(detailed.companyName, state.auditType?.auditName),
+      );
+    } catch (_) {
+      // Keep list-based values if the detail fetch fails.
+    }
   }
 
   Future<void> selectAuditType(FiveSAuditType? type) async {
@@ -328,10 +380,9 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
 
     var actionPlan = existing?.actionPlan;
     if (triggered) {
-      actionPlan ??= ActionPlanAnswer(
-        notes: question.actionPlan?.defaultValue ?? '',
-        assigneeIds: question.actionPlan?.defaultAssigneeIds ?? const [],
-        assigneeNames: question.actionPlan?.defaultAssigneeNames ?? const [],
+      actionPlan = buildActionPlanWithDefaults(
+        existing: actionPlan,
+        config: question.actionPlan,
       );
       actionPlan = _withDueDate(actionPlan);
     } else {
@@ -367,6 +418,76 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
     final updated = Map<int, AssessmentResponse>.from(state.responses);
     updated[questionId] = existing.copyWith(actionPlan: _withDueDate(actionPlan));
     state = state.copyWith(responses: updated);
+  }
+
+  void removeActionPlanProofImage(int questionId, int index) {
+    final existing = state.responses[questionId]?.actionPlan;
+    if (existing == null) return;
+    if (index < 0 || index >= existing.proofImages.length) return;
+    final next = [...existing.proofImages]..removeAt(index);
+    setActionPlan(questionId, existing.copyWith(proofImages: next));
+  }
+
+  Future<String?> uploadActionPlanProofImages({
+    required int questionId,
+    required List<ProofImageUploadFile> files,
+  }) async {
+    final companyId = state.company?.id;
+    if (companyId == null || companyId.isEmpty) {
+      return 'Select a company first';
+    }
+    final response = state.responses[questionId];
+    if (response == null) return 'Answer the question before adding images';
+
+    final current = response.actionPlan ?? const ActionPlanAnswer();
+    final remaining = current.remainingProofSlots;
+    if (remaining <= 0) {
+      return 'You can upload up to ${ActionPlanAnswer.maxProofImages} images.';
+    }
+
+    final selected = files.take(remaining).toList();
+    for (final file in selected) {
+      final validation = validateProofImage(
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes ?? 0,
+      );
+      if (validation != null) return validation;
+    }
+
+    state = state.copyWith(
+      uploadingProofQuestionId: questionId,
+      clearError: true,
+    );
+    try {
+      final uploaded =
+          await _ref.read(actionPlanRepositoryProvider).uploadProofImages(
+                companyId: companyId,
+                files: selected,
+              );
+      if (uploaded.isEmpty) {
+        state = state.copyWith(clearUploadingProof: true);
+        return 'Failed to upload proof image';
+      }
+      final latest = state.responses[questionId]?.actionPlan ?? current;
+      setActionPlan(
+        questionId,
+        latest.copyWith(proofImages: [...latest.proofImages, ...uploaded]),
+      );
+      state = state.copyWith(clearUploadingProof: true);
+      return null;
+    } on ApiException catch (e) {
+      state = state.copyWith(
+        clearUploadingProof: true,
+        errorMessage: e.message,
+      );
+      return e.message;
+    } catch (_) {
+      state = state.copyWith(
+        clearUploadingProof: true,
+        errorMessage: 'Failed to upload proof image',
+      );
+      return 'Failed to upload proof image';
+    }
   }
 
   Future<void> _loadDueDaySettings({
@@ -445,6 +566,16 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
     return null;
   }
 
+  /// Best-effort draft save used when leaving or backgrounding the app.
+  /// Returns false when skipped or failed; does not surface validation errors.
+  Future<bool> autoSaveDraftIfPossible() async {
+    if (!state.canAutoSaveDraft) return false;
+    if (state.saving || state.loading || !state.initialized) return false;
+    if (validateDraft() != null) return false;
+    final record = await saveDraft();
+    return record != null;
+  }
+
   String? validateSubmit(List<FlatAuditQuestion> questions) {
     final draftError = validateDraft();
     if (draftError != null) return draftError;
@@ -508,7 +639,11 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
           ? await _repo.update(state.recordId!, payload)
           : await _repo.create(payload);
 
-      state = state.copyWith(saving: false, recordId: record.id);
+      state = state.copyWith(
+        saving: false,
+        recordId: record.id,
+        status: record.status,
+      );
       return record;
     } on ApiException catch (e) {
       state = state.copyWith(saving: false, errorMessage: e.message);
@@ -523,6 +658,39 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
     final name = (companyName ?? '').trim().isEmpty ? '5S Audit' : companyName!.trim();
     final type = (auditTypeName ?? '').trim();
     return type.isNotEmpty ? '$name - $type' : '$name 5S Audit';
+  }
+
+  Map<int, AssessmentResponse> _hydrateActionPlanDefaults(
+    Map<int, AssessmentResponse> responses,
+    List<FlatAuditQuestion> questions,
+  ) {
+    if (responses.isEmpty || questions.isEmpty) return responses;
+    final byId = {for (final q in questions) q.id: q};
+    final updated = Map<int, AssessmentResponse>.from(responses);
+    var changed = false;
+
+    for (final entry in responses.entries) {
+      final question = byId[entry.key];
+      if (question == null) continue;
+      final response = entry.value;
+      final triggered = isActionPlanTriggered(
+        question: question,
+        score: response.score,
+        optionIndex: response.optionIndex,
+      );
+      if (!triggered) continue;
+
+      final hydrated = buildActionPlanWithDefaults(
+        existing: response.actionPlan,
+        config: question.actionPlan,
+      );
+      final withDue = _withDueDate(hydrated);
+      if (withDue == response.actionPlan) continue;
+      updated[entry.key] = response.copyWith(actionPlan: withDue);
+      changed = true;
+    }
+
+    return changed ? updated : responses;
   }
 }
 

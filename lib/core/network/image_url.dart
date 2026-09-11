@@ -54,6 +54,8 @@ String _defaultApiOrigin() {
 
 const maxProofImageBytes = 5 * 1024 * 1024;
 
+const maxProofImagesPerActionPlan = 10;
+
 const allowedProofMimeTypes = {
   'image/png',
   'image/jpeg',

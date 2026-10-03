@@ -324,7 +324,7 @@ class FiveSAuditRecord extends Equatable {
     this.createdByName,
     this.createdByRole,
     this.updatedBy,
-    this.status = 'draft',
+    this.status = AuditStatus.draft,
     this.summary = '',
     this.sign = false,
     this.declarationSignature,
@@ -346,7 +346,7 @@ class FiveSAuditRecord extends Equatable {
   final String? createdByName;
   final String? createdByRole;
   final String? updatedBy;
-  final String status; // UI status
+  final AuditStatus status;
   final String summary;
   final bool sign;
   final String? declarationSignature;
@@ -375,7 +375,7 @@ class FiveSAuditRecord extends Equatable {
       createdByName: json['created_by_name'] as String?,
       createdByRole: json['created_by_role'] as String? ?? json['creator_role'] as String?,
       updatedBy: json['updated_by'] as String? ?? json['updated_by_name'] as String?,
-      status: AuditStatusMapper.toUi(json['status']?.toString()),
+      status: AuditStatus.fromApi(json['status']),
       summary: (json['summary'] as String?) ?? '',
       sign: json['sign'] == true,
       declarationSignature: json['declaration_signature']?.toString(),

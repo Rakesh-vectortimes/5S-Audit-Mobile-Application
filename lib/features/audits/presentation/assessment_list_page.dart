@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/constants/audit_status.dart';
 import '../../../core/network/api_response.dart';
 import '../../../core/permissions/record_permissions.dart';
 import '../../../core/router/app_routes.dart';
@@ -229,15 +230,17 @@ class _AssessmentListPageState extends ConsumerState<AssessmentListPage> {
                                 );
                               }
                               final record = list.items[index];
-                              final canEdit = RecordPermissions.canEditRecord(
+                              final canManage = RecordPermissions.canEditRecord(
                                 user: auth.user,
                                 createdByRole: record.createdByRole,
                                 createdBy: record.createdBy,
                               );
+                              final canEdit = canManage && record.status.canEdit;
                               final busy = _isBusy(record.id);
                               return _AuditCard(
                                 record: record,
                                 canEdit: canEdit,
+                                canDelete: canManage,
                                 canExport: canExport,
                                 busy: busy,
                                 exportingPdf: _isBusy(record.id, 'pdf'),
@@ -317,6 +320,7 @@ class _AuditCard extends StatelessWidget {
   const _AuditCard({
     required this.record,
     required this.canEdit,
+    required this.canDelete,
     required this.canExport,
     required this.busy,
     required this.exportingPdf,
@@ -330,6 +334,7 @@ class _AuditCard extends StatelessWidget {
 
   final FiveSAuditRecord record;
   final bool canEdit;
+  final bool canDelete;
   final bool canExport;
   final bool busy;
   final bool exportingPdf;
@@ -383,7 +388,7 @@ class _AuditCard extends StatelessWidget {
                 ].join(' · '),
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
-              if (canExport || canEdit) ...[
+              if (canExport || canEdit || canDelete) ...[
                 const SizedBox(height: 4),
                 Row(
                   children: [
@@ -402,19 +407,19 @@ class _AuditCard extends StatelessWidget {
                         loading: exportingWord,
                       ),
                     ],
-                    if (canEdit) ...[
+                    if (canEdit)
                       _ActionIconButton(
                         tooltip: 'Edit',
                         icon: Icons.edit_outlined,
                         onPressed: onEdit,
                       ),
+                    if (canDelete)
                       _ActionIconButton(
                         tooltip: 'Delete',
                         icon: Icons.delete_outline,
                         color: AppColors.error,
                         onPressed: onDelete,
                       ),
-                    ],
                   ],
                 ),
               ],
@@ -464,11 +469,11 @@ class _ActionIconButton extends StatelessWidget {
 class _StatusChip extends StatelessWidget {
   const _StatusChip({required this.status});
 
-  final String status;
+  final AuditStatus status;
 
   @override
   Widget build(BuildContext context) {
-    final submitted = status == 'submitted';
+    final submitted = status.isSubmitted;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
@@ -476,7 +481,7 @@ class _StatusChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        submitted ? 'Submitted' : 'Draft',
+        status.label,
         style: TextStyle(
           color: submitted ? AppColors.success : AppColors.warning,
           fontWeight: FontWeight.w600,

@@ -249,7 +249,7 @@ abstract final class FiveSAuditMapper {
       createdByName: raw['created_by_name'] as String?,
       createdByRole: createdByRole,
       updatedBy: updatedBy,
-      status: AuditStatusMapper.toUi(raw['status']?.toString()),
+      status: AuditStatus.fromApi(raw['status']),
       summary: review.summary,
       sign: review.sign,
       declarationSignature: review.declarationSignature,

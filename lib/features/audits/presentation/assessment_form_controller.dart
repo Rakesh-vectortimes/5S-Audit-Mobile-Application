@@ -19,7 +19,7 @@ import '../data/models/assessment_models.dart';
 class AssessmentFormState extends Equatable {
   const AssessmentFormState({
     this.recordId,
-    this.status = AuditStatusMapper.draft,
+    this.status = AuditStatus.draft,
     this.company,
     this.auditType,
     this.branch,
@@ -41,7 +41,7 @@ class AssessmentFormState extends Equatable {
   });
 
   final String? recordId;
-  final String status;
+  final AuditStatus status;
   final Company? company;
   final FiveSAuditType? auditType;
   final Branch? branch;
@@ -64,12 +64,11 @@ class AssessmentFormState extends Equatable {
   bool get isEdit => recordId != null && recordId!.isNotEmpty;
 
   /// Auto-save only for in-progress drafts (never rewrite a submitted audit).
-  bool get canAutoSaveDraft =>
-      status == AuditStatusMapper.draft || status.isEmpty;
+  bool get canAutoSaveDraft => status.canEdit;
 
   AssessmentFormState copyWith({
     String? recordId,
-    String? status,
+    AuditStatus? status,
     Company? company,
     FiveSAuditType? auditType,
     Branch? branch,
@@ -337,17 +336,9 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
     );
   }
 
-  void updateBackground(CompanyBackground background) {
-    state = state.copyWith(background: background);
-  }
-
   void setReportDate(String date) {
     state = state.copyWith(reportDate: date);
     _recalculateActionPlanDueDates();
-  }
-
-  void setTitle(String title) {
-    state = state.copyWith(title: title);
   }
 
   void setSummary(String summary) {
@@ -601,15 +592,27 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
     return null;
   }
 
-  Future<FiveSAuditRecord?> saveDraft() => _save(statusUi: AuditStatusMapper.draft);
+  Future<FiveSAuditRecord?> saveDraft() {
+    if (!state.status.canEdit) {
+      state = state.copyWith(errorMessage: 'Submitted audits cannot be edited');
+      return Future.value(null);
+    }
+    return _save(status: AuditStatus.draft);
+  }
 
-  Future<FiveSAuditRecord?> submit() => _save(statusUi: AuditStatusMapper.submitted);
+  Future<FiveSAuditRecord?> submit() {
+    if (state.isEdit && !state.status.canEdit) {
+      state = state.copyWith(errorMessage: 'Submitted audits cannot be edited');
+      return Future.value(null);
+    }
+    return _save(status: AuditStatus.published);
+  }
 
-  Future<FiveSAuditRecord?> _save({required String statusUi}) async {
+  Future<FiveSAuditRecord?> _save({required AuditStatus status}) async {
     final config = _ref.read(fiveSAuditConfigControllerProvider);
     final questions = config.flatQuestions;
 
-    final error = statusUi == AuditStatusMapper.submitted
+    final error = status.isSubmitted
         ? validateSubmit(questions)
         : validateDraft();
     if (error != null) {
@@ -626,7 +629,7 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
         companyName: state.company?.companyName ?? state.background.companyName ?? '',
         auditTypeName: state.auditType?.auditName,
         reportDate: state.reportDate ?? FiveSAuditMapper.formatApiDate(null),
-        statusUi: statusUi,
+        statusUi: status.uiValue,
         summary: state.summary,
         sign: state.sign,
         declarationSignature: state.declarationSignature,

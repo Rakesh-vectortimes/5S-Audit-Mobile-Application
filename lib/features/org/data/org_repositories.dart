@@ -1,9 +1,11 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/constants/crm_conversion_type.dart';
 import '../../../core/network/api_get_helper.dart';
 import '../../../core/network/dio_client.dart';
 import '../../../core/network/list_response.dart';
+import 'converted_companies.dart';
 import 'models/org_models.dart';
 
 class CompanyRepository with ApiGetHelper {
@@ -37,6 +39,36 @@ class CompanyRepository with ApiGetHelper {
       fromJson: Company.fromJson,
       fallbackMessage: 'Failed to load company',
     );
+  }
+
+  Future<List<Company>> _listAllPages({int pageSize = 100}) async {
+    final all = <Company>[];
+    var page = 1;
+    while (page <= 20) {
+      final batch = await list(page: page, limit: pageSize);
+      all.addAll(batch);
+      if (batch.length < pageSize) break;
+      page++;
+    }
+    return all;
+  }
+
+  /// Companies from deals converted to [convertedTo] (default 5S Audit).
+  Future<List<Company>> listConverted({
+    CrmConversionType convertedTo = CrmConversionType.fiveSAudit,
+    String? search,
+  }) async {
+    final deals = await getList(
+      '/crm/deals/dependency',
+      queryParameters: {
+        'converted_to': convertedTo.apiValue,
+        'search': search,
+      },
+      fromJson: (json) => json,
+      fallbackMessage: 'Failed to load converted companies',
+    );
+    final catalog = await _listAllPages();
+    return resolveConvertedCompanies(deals: deals, catalog: catalog);
   }
 }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/constants/crm_conversion_type.dart';
 import '../../core/network/api_response.dart';
 import '../../features/org/data/models/org_models.dart';
 import '../../features/org/data/org_repositories.dart';
@@ -13,12 +14,16 @@ class CompanyPicker extends ConsumerStatefulWidget {
     this.value,
     this.enabled = true,
     this.allowNone = false,
+    this.convertedTo = CrmConversionType.fiveSAudit,
   });
 
   final Company? value;
   final ValueChanged<Company?> onChanged;
   final bool enabled;
   final bool allowNone;
+
+  /// When set, only companies converted to this CRM type are listed.
+  final CrmConversionType? convertedTo;
 
   @override
   ConsumerState<CompanyPicker> createState() => _CompanyPickerState();
@@ -41,7 +46,11 @@ class _CompanyPickerState extends ConsumerState<CompanyPicker> {
       _error = null;
     });
     try {
-      final items = await ref.read(companyRepositoryProvider).list(limit: 100);
+      final items = widget.convertedTo == null
+          ? await ref.read(companyRepositoryProvider).list(limit: 100)
+          : await ref.read(companyRepositoryProvider).listConverted(
+                convertedTo: widget.convertedTo!,
+              );
       if (!mounted) return;
       setState(() {
         _items = items;
@@ -255,9 +264,31 @@ class _BranchFloorLocationCascadeState
   @override
   Widget build(BuildContext context) {
     final hasCompany = widget.companyId != null && widget.companyId!.isNotEmpty;
+    if (!hasCompany) {
+      return const SizedBox.shrink();
+    }
 
-    return Column(
-      children: [
+    final showBranch =
+        widget.branch != null || (!_loadingBranches && _branches.isNotEmpty);
+    final showFloor =
+        widget.floor != null || (!_loadingFloors && _floors.isNotEmpty);
+    final showLocation = widget.location != null ||
+        (!_loadingLocations && _locations.isNotEmpty);
+
+    if (!showBranch && !showFloor && !showLocation) {
+      return const SizedBox.shrink();
+    }
+
+    final children = <Widget>[];
+    void addField(Widget child) {
+      if (children.isNotEmpty) {
+        children.add(const SizedBox(height: 12));
+      }
+      children.add(child);
+    }
+
+    if (showBranch) {
+      addField(
         AppDropdown<Branch>(
           label: 'Branch (optional)',
           items: [
@@ -276,7 +307,10 @@ class _BranchFloorLocationCascadeState
             widget.onFloorChanged(null);
           },
         ),
-        const SizedBox(height: 12),
+      );
+    }
+    if (showFloor) {
+      addField(
         AppDropdown<Floor>(
           label: 'Floor (optional)',
           items: [
@@ -292,7 +326,10 @@ class _BranchFloorLocationCascadeState
           allowNone: true,
           onChanged: widget.onFloorChanged,
         ),
-        const SizedBox(height: 12),
+      );
+    }
+    if (showLocation) {
+      addField(
         AppDropdown<Location>(
           label: widget.locationRequired ? 'Location *' : 'Location (optional)',
           items: [
@@ -308,7 +345,9 @@ class _BranchFloorLocationCascadeState
           allowNone: !widget.locationRequired,
           onChanged: widget.onLocationChanged,
         ),
-      ],
-    );
+      );
+    }
+
+    return Column(children: children);
   }
 }

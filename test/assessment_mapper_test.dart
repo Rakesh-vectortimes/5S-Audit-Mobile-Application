@@ -12,6 +12,7 @@ void main() {
       expect(AuditStatusMapper.toApi('published'), 'published');
       expect(AuditStatusMapper.toApi('draft'), 'draft');
       expect(AuditStatusMapper.toUi('published'), 'submitted');
+      expect(AuditStatusMapper.toUi('submitted'), 'submitted');
       expect(AuditStatusMapper.toApiFilter('submitted'), 'published');
       expect(AuditStatusMapper.toApiFilter('all'), isNull);
     });

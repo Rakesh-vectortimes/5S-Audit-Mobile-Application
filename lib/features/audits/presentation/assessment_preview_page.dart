@@ -193,7 +193,7 @@ class _AssessmentPreviewPageState extends ConsumerState<AssessmentPreviewPage> {
                       children: [
                         Text(record.displayTitle, style: Theme.of(context).textTheme.headlineMedium),
                         const SizedBox(height: 8),
-                        Text('Status: ${record.status}'),
+                        Text('Status: ${record.status.label}'),
                         Text('Audit type: ${record.auditTypeName ?? '-'}'),
                         Text('Report date: ${record.reportDate ?? '-'}'),
                         Text('Prepared by: ${record.preparedBy ?? record.createdByName ?? '-'}'),

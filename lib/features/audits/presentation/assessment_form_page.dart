@@ -17,6 +17,7 @@ import '../../five_s_config/data/models/five_s_config_models.dart';
 import '../../five_s_config/domain/section_hierarchy.dart';
 import '../../five_s_config/presentation/five_s_audit_config_controller.dart';
 import '../data/action_plan_helpers.dart';
+import '../data/assessment_progress.dart';
 import '../data/models/assessment_models.dart';
 import 'assessment_form_controller.dart';
 
@@ -170,6 +171,8 @@ class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage>
   }
 
   Future<void> _saveDraft() async {
+    await _signatureKey.currentState?.flushExport();
+    if (!mounted) return;
     final record =
         await ref.read(assessmentFormControllerProvider.notifier).saveDraft();
     if (!mounted) return;
@@ -183,6 +186,8 @@ class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage>
   }
 
   Future<void> _submit() async {
+    await _signatureKey.currentState?.flushExport();
+    if (!mounted) return;
     final record =
         await ref.read(assessmentFormControllerProvider.notifier).submit();
     if (!mounted) return;
@@ -203,6 +208,16 @@ class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage>
     final current = steps[_stepIndex.clamp(0, steps.length - 1)];
     final configError = config.errorMessage;
     final configLoading = config.status == FiveSConfigStatus.loading;
+    final totalQuestions = config.flatQuestions.length;
+    final answeredQuestions = countAnsweredQuestions(
+      questionIds: config.flatQuestions.map((q) => q.id),
+      responses: form.responses,
+    );
+    final progressPercent = questionProgressPercent(
+      totalQuestions: totalQuestions,
+      answeredQuestions: answeredQuestions,
+    );
+    final canEditAudit = form.status.canEdit;
 
     return PopScope(
       canPop: false,
@@ -226,7 +241,7 @@ class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage>
                     ),
                   ),
                   Text(
-                    '${((_stepIndex + 1) / steps.length * 100).round()}%',
+                    '$progressPercent%',
                     style: const TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                 ],
@@ -240,6 +255,10 @@ class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage>
                 children: [
                   if (form.errorMessage != null)
                     _FormBanner(message: form.errorMessage!, isError: true),
+                  if (!canEditAudit)
+                    const _FormBanner(
+                      message: 'This audit has been submitted and cannot be edited.',
+                    ),
                   if (configLoading)
                     const _FormBanner(message: 'Loading audit questions…'),
                   if (!configLoading && configError != null)
@@ -287,21 +306,22 @@ class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage>
                               child: const Text('Back'),
                             ),
                           const Spacer(),
-                          OutlinedButton(
-                            onPressed: form.saving || configLoading
-                                ? null
-                                : _saveDraft,
-                            child: form.saving
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Text('Save'),
-                          ),
-                          const SizedBox(width: 8),
+                          if (canEditAudit)
+                            OutlinedButton(
+                              onPressed: form.saving || configLoading
+                                  ? null
+                                  : _saveDraft,
+                              child: form.saving
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Text('Save'),
+                            ),
+                          if (canEditAudit) const SizedBox(width: 8),
                           if (_stepIndex < steps.length - 1)
                             FilledButton(
                               style: FilledButton.styleFrom(
@@ -312,7 +332,7 @@ class _AssessmentFormPageState extends ConsumerState<AssessmentFormPage>
                                   : _goNext,
                               child: const Text('Next'),
                             )
-                          else
+                          else if (canEditAudit)
                             FilledButton(
                               style: FilledButton.styleFrom(
                                 minimumSize: const Size(88, 48),
@@ -435,55 +455,6 @@ class _DetailsStep extends ConsumerWidget {
           subtitle: Text(dateLabel),
           trailing: const Icon(Icons.calendar_today_outlined),
           onTap: onPickDate,
-        ),
-        const SizedBox(height: 8),
-        TextFormField(
-          initialValue: form.title,
-          decoration: const InputDecoration(labelText: 'Title'),
-          onChanged: controller.setTitle,
-        ),
-        const SizedBox(height: 12),
-        Text(
-          'Company background (prefilled; editable)',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-        const SizedBox(height: 8),
-        // Key forces fields to rebuild when company details are fetched.
-        TextFormField(
-          key: ValueKey('workforce-${form.company?.id}-${form.background.totalWorkforce}'),
-          initialValue: '${form.background.totalWorkforce ?? ''}',
-          decoration: const InputDecoration(labelText: 'Workforce'),
-          keyboardType: TextInputType.number,
-          onChanged: (v) => controller.updateBackground(
-            form.background.copyWith(totalWorkforce: int.tryParse(v) ?? v),
-          ),
-        ),
-        const SizedBox(height: 10),
-        TextFormField(
-          key: ValueKey('shifts-${form.company?.id}-${form.background.shiftOperation}'),
-          initialValue: '${form.background.shiftOperation ?? ''}',
-          decoration: const InputDecoration(labelText: 'Shifts'),
-          onChanged: (v) => controller.updateBackground(
-            form.background.copyWith(shiftOperation: v),
-          ),
-        ),
-        const SizedBox(height: 10),
-        TextFormField(
-          key: ValueKey('hours-${form.company?.id}-${form.background.workingHours}'),
-          initialValue: form.background.workingHours ?? '',
-          decoration: const InputDecoration(labelText: 'Working hours'),
-          onChanged: (v) => controller.updateBackground(
-            form.background.copyWith(workingHours: v),
-          ),
-        ),
-        const SizedBox(height: 10),
-        TextFormField(
-          key: ValueKey('days-${form.company?.id}-${form.background.workingDays}'),
-          initialValue: '${form.background.workingDays ?? ''}',
-          decoration: const InputDecoration(labelText: 'Working days'),
-          onChanged: (v) => controller.updateBackground(
-            form.background.copyWith(workingDays: v),
-          ),
         ),
       ],
     );
@@ -915,7 +886,12 @@ class _ReviewStep extends ConsumerWidget {
         Text('Score summary', style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 6),
         Text('Total $total / $max · Grade $grade'),
-        Text('Answered ${form.responses.values.where((r) => r.isAnswered).length}/${config.flatQuestions.length}'),
+        Text(
+          'Answered ${countAnsweredQuestions(
+            questionIds: config.flatQuestions.map((q) => q.id),
+            responses: form.responses,
+          )}/${config.flatQuestions.length}',
+        ),
         const SizedBox(height: 16),
         TextFormField(
           initialValue: form.summary,

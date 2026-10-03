@@ -10,6 +10,23 @@ void main() {
       expect(AuditStatusMapper.toUi('published'), 'submitted');
       expect(AuditStatusMapper.toApi('draft'), 'draft');
     });
+
+    test('treats published as submitted', () {
+      expect(AuditStatusMapper.isSubmitted('submitted'), isTrue);
+      expect(AuditStatusMapper.isSubmitted('published'), isTrue);
+      expect(AuditStatusMapper.isSubmitted('draft'), isFalse);
+      expect(AuditStatusMapper.isSubmitted(AuditStatus.published), isTrue);
+    });
+
+    test('parses backend enum values', () {
+      expect(AuditStatus.fromApi('published'), AuditStatus.published);
+      expect(AuditStatus.fromApi('submitted'), AuditStatus.published);
+      expect(AuditStatus.fromApi('draft'), AuditStatus.draft);
+      expect(AuditStatus.published.canEdit, isFalse);
+      expect(AuditStatus.draft.canEdit, isTrue);
+      expect(AuditStatus.published.apiValue, 'published');
+      expect(AuditStatus.published.label, 'Submitted');
+    });
   });
 
   group('ApiResponse', () {

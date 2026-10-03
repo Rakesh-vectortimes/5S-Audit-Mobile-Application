@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/config/app_config.dart';
 import '../../../core/theme/app_theme.dart';
 import 'auth_controller.dart';
 
@@ -39,7 +38,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authControllerProvider);
-    final config = AppConfig.instance;
     final submitting = auth.status == AuthStatus.loading;
     final errorMessage = auth.status == AuthStatus.error ? auth.errorMessage : null;
 
@@ -164,12 +162,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                               ),
                             )
                           : const Text('Sign in'),
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      'API: ${config.apiV1BaseUrl}\nEnv: ${config.env.name}',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: 11),
                     ),
                   ],
                 ),

@@ -388,41 +388,44 @@ class _AuditCard extends StatelessWidget {
                 ].join(' · '),
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
-              if (canExport || canEdit || canDelete) ...[
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    const Spacer(),
-                    if (canExport) ...[
-                      _ActionIconButton(
-                        tooltip: 'Export PDF',
-                        icon: Icons.picture_as_pdf_outlined,
-                        onPressed: busy ? null : onExportPdf,
-                        loading: exportingPdf,
-                      ),
-                      _ActionIconButton(
-                        tooltip: 'Export Word',
-                        icon: Icons.description_outlined,
-                        onPressed: busy ? null : onExportWord,
-                        loading: exportingWord,
-                      ),
-                    ],
-                    if (canEdit)
-                      _ActionIconButton(
-                        tooltip: 'Edit',
-                        icon: Icons.edit_outlined,
-                        onPressed: onEdit,
-                      ),
-                    if (canDelete)
-                      _ActionIconButton(
-                        tooltip: 'Delete',
-                        icon: Icons.delete_outline,
-                        color: AppColors.error,
-                        onPressed: onDelete,
-                      ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  const Spacer(),
+                  _ActionIconButton(
+                    tooltip: 'Preview',
+                    icon: Icons.visibility_outlined,
+                    onPressed: onOpen,
+                  ),
+                  if (canExport) ...[
+                    _ActionIconButton(
+                      tooltip: 'Export PDF',
+                      icon: Icons.picture_as_pdf_outlined,
+                      onPressed: busy ? null : onExportPdf,
+                      loading: exportingPdf,
+                    ),
+                    _ActionIconButton(
+                      tooltip: 'Export Word',
+                      icon: Icons.description_outlined,
+                      onPressed: busy ? null : onExportWord,
+                      loading: exportingWord,
+                    ),
                   ],
-                ),
-              ],
+                  if (canEdit)
+                    _ActionIconButton(
+                      tooltip: 'Edit',
+                      icon: Icons.edit_outlined,
+                      onPressed: onEdit,
+                    ),
+                  if (canDelete)
+                    _ActionIconButton(
+                      tooltip: 'Delete',
+                      icon: Icons.delete_outline,
+                      color: AppColors.error,
+                      onPressed: onDelete,
+                    ),
+                ],
+              ),
             ],
           ),
         ),

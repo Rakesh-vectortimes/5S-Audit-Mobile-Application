@@ -411,6 +411,22 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
     state = state.copyWith(responses: updated);
   }
 
+  void beginProofUpload(int questionId) {
+    state = state.copyWith(
+      uploadingProofQuestionId: questionId,
+      clearError: true,
+    );
+  }
+
+  String? finishProofUpload({String? errorMessage}) {
+    state = state.copyWith(
+      clearUploadingProof: true,
+      errorMessage: errorMessage,
+      clearError: errorMessage == null || errorMessage.isEmpty,
+    );
+    return errorMessage;
+  }
+
   void removeActionPlanProofImage(int questionId, int index) {
     final existing = state.responses[questionId]?.actionPlan;
     if (existing == null) return;
@@ -425,15 +441,19 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
   }) async {
     final companyId = state.company?.id;
     if (companyId == null || companyId.isEmpty) {
-      return 'Select a company first';
+      return finishProofUpload(errorMessage: 'Select a company first');
     }
     final response = state.responses[questionId];
-    if (response == null) return 'Answer the question before adding images';
+    if (response == null) {
+      return finishProofUpload(errorMessage: 'Answer the question before adding images');
+    }
 
     final current = response.actionPlan ?? const ActionPlanAnswer();
     final remaining = current.remainingProofSlots;
     if (remaining <= 0) {
-      return 'You can upload up to ${ActionPlanAnswer.maxProofImages} images.';
+      return finishProofUpload(
+        errorMessage: 'You can upload up to ${ActionPlanAnswer.maxProofImages} images.',
+      );
     }
 
     final selected = files.take(remaining).toList();
@@ -442,7 +462,9 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
         mimeType: file.mimeType,
         sizeBytes: file.sizeBytes ?? 0,
       );
-      if (validation != null) return validation;
+      if (validation != null) {
+        return finishProofUpload(errorMessage: validation);
+      }
     }
 
     state = state.copyWith(
@@ -456,28 +478,18 @@ class AssessmentFormController extends StateNotifier<AssessmentFormState> {
                 files: selected,
               );
       if (uploaded.isEmpty) {
-        state = state.copyWith(clearUploadingProof: true);
-        return 'Failed to upload proof image';
+        return finishProofUpload(errorMessage: 'Failed to upload proof image');
       }
       final latest = state.responses[questionId]?.actionPlan ?? current;
       setActionPlan(
         questionId,
         latest.copyWith(proofImages: [...latest.proofImages, ...uploaded]),
       );
-      state = state.copyWith(clearUploadingProof: true);
-      return null;
+      return finishProofUpload();
     } on ApiException catch (e) {
-      state = state.copyWith(
-        clearUploadingProof: true,
-        errorMessage: e.message,
-      );
-      return e.message;
+      return finishProofUpload(errorMessage: e.message);
     } catch (_) {
-      state = state.copyWith(
-        clearUploadingProof: true,
-        errorMessage: 'Failed to upload proof image',
-      );
-      return 'Failed to upload proof image';
+      return finishProofUpload(errorMessage: 'Failed to upload proof image');
     }
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/images/proof_image_prepare.dart';
 import '../../../core/network/image_url.dart';
 import '../../../core/theme/app_theme.dart';
 import '../data/action_plan_utils.dart';
@@ -279,35 +280,35 @@ class _ActionPlanDetailPageState extends ConsumerState<ActionPlanDetailPage> {
       return;
     }
 
-    final pickerFiles = <({String path, String? name, String? mime, int size})>[];
+    final selected = <XFile>[];
     if (source == ImageSource.gallery) {
-      final picked = await _picker.pickMultiImage(imageQuality: 85);
-      for (final file in picked.take(remaining)) {
-        pickerFiles.add((
-          path: file.path,
-          name: file.name,
-          mime: _guessMime(file.path, file.mimeType),
-          size: await file.length(),
-        ));
-      }
+      selected.addAll((await _picker.pickMultiImage()).take(remaining));
     } else {
-      final file = await _picker.pickImage(source: source, imageQuality: 85);
-      if (file != null) {
-        pickerFiles.add((
-          path: file.path,
-          name: file.name,
-          mime: _guessMime(file.path, file.mimeType),
-          size: await file.length(),
-        ));
-      }
+      final file = await _picker.pickImage(source: source);
+      if (file != null) selected.add(file);
     }
 
-    for (final file in pickerFiles) {
+    for (final file in selected) {
+      final PreparedProofImage prepared;
+      try {
+        prepared = await prepareProofImage(file);
+      } on ProofImagePrepareException catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        break;
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not read this photo. Please take it again.')),
+        );
+        break;
+      }
       final error = await controller.uploadProof(
         filePath: file.path,
-        fileName: file.name,
-        mimeType: file.mime,
-        sizeBytes: file.size,
+        fileName: prepared.fileName,
+        mimeType: prepared.mimeType,
+        sizeBytes: prepared.sizeBytes,
+        bytes: prepared.bytes,
       );
       if (!mounted) return;
       if (error != null) {
@@ -315,16 +316,6 @@ class _ActionPlanDetailPageState extends ConsumerState<ActionPlanDetailPage> {
         break;
       }
     }
-  }
-
-  String? _guessMime(String path, String? mimeType) {
-    if (mimeType != null && mimeType.isNotEmpty) return mimeType;
-    final lower = path.toLowerCase();
-    if (lower.endsWith('.png')) return 'image/png';
-    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
-    if (lower.endsWith('.gif')) return 'image/gif';
-    if (lower.endsWith('.webp')) return 'image/webp';
-    return null;
   }
 
   Future<void> _changeDueDate(ActionPlanDetail detail) async {

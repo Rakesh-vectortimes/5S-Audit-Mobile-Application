@@ -4,9 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_response.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../auth/presentation/auth_controller.dart';
+import '../../five_s_config/data/five_s_config_repositories.dart';
+import '../../five_s_config/data/models/five_s_config_models.dart';
+import '../../five_s_config/domain/section_hierarchy.dart';
 import '../data/assessment_export_share.dart';
 import '../data/assessment_repository.dart';
 import '../data/models/assessment_models.dart';
+import 'assessment_report_view.dart';
 
 class AssessmentPreviewPage extends ConsumerStatefulWidget {
   const AssessmentPreviewPage({super.key, required this.assessmentId});
@@ -19,6 +23,9 @@ class AssessmentPreviewPage extends ConsumerStatefulWidget {
 
 class _AssessmentPreviewPageState extends ConsumerState<AssessmentPreviewPage> {
   FiveSAuditRecord? _record;
+  String? _auditTypeName;
+  List<FlatAuditQuestion> _questions = const [];
+  List<String> _sectionOrder = const [];
   String? _error;
   bool _loading = true;
   bool _exportingPdf = false;
@@ -39,9 +46,13 @@ class _AssessmentPreviewPageState extends ConsumerState<AssessmentPreviewPage> {
       final record = await ref
           .read(fiveSAuditAssessmentRepositoryProvider)
           .getById(widget.assessmentId);
+      final config = await _loadReportConfig(record);
       if (!mounted) return;
       setState(() {
         _record = record;
+        _auditTypeName = config.typeName;
+        _questions = config.questions;
+        _sectionOrder = config.sectionOrder;
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -56,6 +67,77 @@ class _AssessmentPreviewPageState extends ConsumerState<AssessmentPreviewPage> {
         _error = 'Failed to load audit';
         _loading = false;
       });
+    }
+  }
+
+  Future<({String? typeName, List<FlatAuditQuestion> questions, List<String> sectionOrder})>
+      _loadReportConfig(FiveSAuditRecord record) async {
+    final companyId = record.companyId ?? record.companyBackground?.companyId;
+    final auditTypeId = record.auditTypeId;
+    if (companyId == null ||
+        companyId.isEmpty ||
+        auditTypeId == null ||
+        auditTypeId.isEmpty) {
+      return (
+        typeName: record.auditTypeName,
+        questions: const <FlatAuditQuestion>[],
+        sectionOrder: const <String>[],
+      );
+    }
+
+    String? typeName = record.auditTypeName;
+    try {
+      final types = await ref.read(fiveSAuditTypeRepositoryProvider).list(companyId: companyId);
+      for (final type in types) {
+        if (type.id == auditTypeId && type.auditName.trim().isNotEmpty) {
+          typeName = type.auditName.trim();
+          break;
+        }
+      }
+    } catch (_) {
+      // The cover title falls back to the name already on the audit.
+    }
+
+    try {
+      final sections = await ref.read(fiveSAuditSectionRepositoryProvider).list(
+            companyId: companyId,
+            auditTypeId: auditTypeId,
+          );
+      final questionRepo = ref.read(fiveSAuditQuestionRepositoryProvider);
+      var documents = await questionRepo.list(
+        companyId: companyId,
+        auditTypeId: auditTypeId,
+      );
+      if (documents.isEmpty && sections.isNotEmpty) {
+        final byId = <String, FiveSAuditQuestionDocument>{};
+        for (final section in sections) {
+          try {
+            final docs = await questionRepo.list(
+              companyId: companyId,
+              auditTypeId: auditTypeId,
+              sectionId: section.id,
+            );
+            for (final doc in docs) {
+              byId[doc.id.isEmpty ? section.id : doc.id] = doc;
+            }
+          } catch (_) {
+            continue;
+          }
+        }
+        documents = byId.values.toList();
+      }
+      final ordered = List<FiveSAuditSection>.from(sections)..sort(compareSectionsByOrder);
+      return (
+        typeName: typeName,
+        questions: mapFlatQuestions(sections: ordered, documents: documents),
+        sectionOrder: getTopLevelSections(ordered).map((section) => section.sectionName).toList(),
+      );
+    } catch (_) {
+      return (
+        typeName: typeName,
+        questions: const <FlatAuditQuestion>[],
+        sectionOrder: const <String>[],
+      );
     }
   }
 
@@ -188,75 +270,11 @@ class _AssessmentPreviewPageState extends ConsumerState<AssessmentPreviewPage> {
               ? Center(child: Text(_error!, style: const TextStyle(color: AppColors.error)))
               : record == null
                   ? const Center(child: Text('Not found'))
-                  : ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: [
-                        Text(record.displayTitle, style: Theme.of(context).textTheme.headlineMedium),
-                        const SizedBox(height: 8),
-                        Text('Status: ${record.status.label}'),
-                        Text('Audit type: ${record.auditTypeName ?? '-'}'),
-                        Text('Report date: ${record.reportDate ?? '-'}'),
-                        Text('Prepared by: ${record.preparedBy ?? record.createdByName ?? '-'}'),
-                        const Divider(height: 28),
-                        Text('Company background', style: Theme.of(context).textTheme.titleLarge),
-                        const SizedBox(height: 6),
-                        Text('Company: ${record.companyName ?? record.companyBackground?.companyName ?? '-'}'),
-                        Text('Location: ${record.companyBackground?.location ?? '-'}'),
-                        Text('Workforce: ${record.companyBackground?.totalWorkforce ?? '-'}'),
-                        Text('Shifts: ${record.companyBackground?.shiftOperation ?? '-'}'),
-                        Text('Hours: ${record.companyBackground?.workingHours ?? '-'}'),
-                        const Divider(height: 28),
-                        Text('Responses', style: Theme.of(context).textTheme.titleLarge),
-                        const SizedBox(height: 8),
-                        if (record.responses.isEmpty)
-                          const Text('No responses')
-                        else
-                          ...record.responses.map(
-                            (r) => Card(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              child: ListTile(
-                                title: Text(r.question ?? 'Q${r.questionId}'),
-                                subtitle: Text(
-                                  [
-                                    r.category,
-                                    if (r.subCategory != null && r.subCategory!.isNotEmpty)
-                                      r.subCategory!,
-                                    'Score: ${r.score ?? '-'}',
-                                    if (r.selectedResponse != null) r.selectedResponse!,
-                                    if (r.comments != null && r.comments!.isNotEmpty)
-                                      'Comments: ${r.comments}',
-                                  ].join(' · '),
-                                ),
-                              ),
-                            ),
-                          ),
-                        const Divider(height: 28),
-                        Text('Summary', style: Theme.of(context).textTheme.titleLarge),
-                        const SizedBox(height: 6),
-                        Text(record.summary.isEmpty ? '-' : record.summary),
-                        const SizedBox(height: 16),
-                        Text('Signature', style: Theme.of(context).textTheme.titleLarge),
-                        const SizedBox(height: 6),
-                        Text(record.sign ? 'Signed' : 'Not signed'),
-                        if ((record.declarationSignature ?? '').startsWith('data:image'))
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Image.memory(
-                              Uri.parse(record.declarationSignature!).data!.contentAsBytes(),
-                              height: 120,
-                              fit: BoxFit.contain,
-                            ),
-                          )
-                        else if ((record.declarationSignature ?? '').startsWith('http'))
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Image.network(
-                              record.declarationSignature!,
-                              height: 120,
-                              fit: BoxFit.contain,
-                            ),
-                          ),
-                      ],
+                  : AssessmentReportView(
+                      record: record,
+                      auditTypeName: _auditTypeName,
+                      questions: _questions,
+                      sectionOrder: _sectionOrder,
                     ),
     );
   }

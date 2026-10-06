@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -171,11 +173,19 @@ class ActionPlanRepository {
     required String id,
     required String filePath,
     String? fileName,
+    String? mimeType,
+    Uint8List? bytes,
   }) async {
     final images = await uploadProofImages(
       planId: id,
       files: [
-        ProofImageUploadFile(path: filePath, fileName: fileName),
+        ProofImageUploadFile(
+          path: filePath,
+          fileName: fileName,
+          mimeType: mimeType,
+          bytes: bytes,
+          sizeBytes: bytes?.length,
+        ),
       ],
     );
     if (images.isEmpty) {
@@ -203,15 +213,7 @@ class ActionPlanRepository {
     try {
       final formData = FormData();
       for (final file in files) {
-        formData.files.add(
-          MapEntry(
-            'images',
-            await MultipartFile.fromFile(
-              file.path,
-              filename: file.fileName,
-            ),
-          ),
-        );
+        formData.files.add(MapEntry('images', await _proofMultipart(file)));
       }
 
       final path = hasPlan
@@ -221,6 +223,10 @@ class ActionPlanRepository {
         path,
         data: formData,
         queryParameters: hasCompany ? {'company_id': companyId} : null,
+        options: Options(
+          sendTimeout: const Duration(seconds: 90),
+          receiveTimeout: const Duration(seconds: 90),
+        ),
       );
       final envelope = ApiResponse.fromDioData<dynamic>(response.data, null);
       if (!envelope.success) {
@@ -236,11 +242,33 @@ class ActionPlanRepository {
       throw ApiException(
         ApiException.messageFromBody(
           e.response?.data,
-          fallback: 'Failed to upload proof image',
+          fallback: _proofUploadFallback(e),
         ),
         statusCode: e.response?.statusCode,
       );
     }
+  }
+
+  Future<MultipartFile> _proofMultipart(ProofImageUploadFile file) {
+    final filename = (file.fileName == null || file.fileName!.trim().isEmpty)
+        ? 'proof.jpg'
+        : file.fileName!.trim();
+    final contentType = _proofMediaType(file.mimeType);
+    final bytes = file.bytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return Future.value(
+        MultipartFile.fromBytes(
+          bytes,
+          filename: filename,
+          contentType: contentType,
+        ),
+      );
+    }
+    return MultipartFile.fromFile(
+      file.path,
+      filename: filename,
+      contentType: contentType,
+    );
   }
 
   PaginatedActionPlanAudits _toPaginatedAudits(
@@ -303,16 +331,43 @@ final actionPlanRepositoryProvider = Provider<ActionPlanRepository>((ref) {
 
 class ProofImageUploadFile {
   const ProofImageUploadFile({
-    required this.path,
+    this.path = '',
+    this.bytes,
     this.fileName,
     this.mimeType,
     this.sizeBytes,
   });
 
   final String path;
+  final Uint8List? bytes;
   final String? fileName;
   final String? mimeType;
   final int? sizeBytes;
+}
+
+DioMediaType _proofMediaType(String? mimeType) {
+  switch ((mimeType ?? '').toLowerCase().trim()) {
+    case 'image/png':
+      return DioMediaType('image', 'png');
+    case 'image/gif':
+      return DioMediaType('image', 'gif');
+    case 'image/webp':
+      return DioMediaType('image', 'webp');
+    default:
+      return DioMediaType('image', 'jpeg');
+  }
+}
+
+String _proofUploadFallback(DioException error) {
+  if (error.response?.statusCode == 413) {
+    return 'Image is too large for the server. Try another photo.';
+  }
+  if (error.type == DioExceptionType.sendTimeout ||
+      error.type == DioExceptionType.receiveTimeout ||
+      error.type == DioExceptionType.connectionTimeout) {
+    return 'Upload timed out. Check your connection and try again.';
+  }
+  return 'Failed to upload proof image';
 }
 
 List<ActionPlanProofImage> parseProofImageUploadResponse(dynamic data) {

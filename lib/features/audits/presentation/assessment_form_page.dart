@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/images/proof_image_prepare.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/audit_pickers.dart';
 import '../../../shared/widgets/location_and_assignee_pickers.dart';
@@ -800,53 +801,61 @@ class _ActionPlanProofImages extends ConsumerWidget {
     final remaining = ActionPlanAnswer.maxProofImages - images.length;
     if (remaining <= 0) return;
 
-    final files = <ProofImageUploadFile>[];
+    final selected = <XFile>[];
     if (source == ImageSource.gallery) {
-      final picked = await picker.pickMultiImage(imageQuality: 85);
-      for (final file in picked.take(remaining)) {
-        final bytes = await file.length();
-        files.add(
-          ProofImageUploadFile(
-            path: file.path,
-            fileName: file.name,
-            mimeType: _guessMime(file.path, file.mimeType),
-            sizeBytes: bytes,
-          ),
-        );
-      }
+      selected.addAll((await picker.pickMultiImage()).take(remaining));
     } else {
-      final file = await picker.pickImage(source: source, imageQuality: 85);
-      if (file != null) {
-        final bytes = await file.length();
+      final file = await picker.pickImage(source: source);
+      if (file != null) selected.add(file);
+    }
+    if (selected.isEmpty) return;
+
+    final controller = ref.read(assessmentFormControllerProvider.notifier);
+    controller.beginProofUpload(questionId);
+
+    final files = <ProofImageUploadFile>[];
+    String? prepareError;
+    try {
+      for (final file in selected) {
+        final prepared = await prepareProofImage(file);
         files.add(
           ProofImageUploadFile(
             path: file.path,
-            fileName: file.name,
-            mimeType: _guessMime(file.path, file.mimeType),
-            sizeBytes: bytes,
+            bytes: prepared.bytes,
+            fileName: prepared.fileName,
+            mimeType: prepared.mimeType,
+            sizeBytes: prepared.sizeBytes,
           ),
         );
       }
+    } on ProofImagePrepareException catch (e) {
+      prepareError = e.message;
+    } catch (_) {
+      prepareError = 'Could not read this photo. Please take it again.';
     }
 
-    if (files.isEmpty) return;
-    final error = await ref
-        .read(assessmentFormControllerProvider.notifier)
-        .uploadActionPlanProofImages(questionId: questionId, files: files);
+    if (!context.mounted) {
+      controller.finishProofUpload(
+        errorMessage: files.isEmpty ? prepareError : null,
+      );
+      return;
+    }
+    if (files.isEmpty) {
+      final message = prepareError ?? 'Could not read this photo. Please take it again.';
+      controller.finishProofUpload(errorMessage: message);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      return;
+    }
+
+    final error = await controller.uploadActionPlanProofImages(
+      questionId: questionId,
+      files: files,
+    );
     if (!context.mounted) return;
-    if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    final message = error ?? prepareError;
+    if (message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
-  }
-
-  String? _guessMime(String path, String? mimeType) {
-    if (mimeType != null && mimeType.isNotEmpty) return mimeType;
-    final lower = path.toLowerCase();
-    if (lower.endsWith('.png')) return 'image/png';
-    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
-    if (lower.endsWith('.gif')) return 'image/gif';
-    if (lower.endsWith('.webp')) return 'image/webp';
-    return 'image/jpeg';
   }
 }
 

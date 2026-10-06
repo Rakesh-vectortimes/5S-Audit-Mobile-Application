@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:equatable/equatable.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -131,6 +133,7 @@ class ActionPlanDetailController extends StateNotifier<ActionPlanDetailState> {
     String? fileName,
     String? mimeType,
     required int sizeBytes,
+    Uint8List? bytes,
   }) async {
     if (!canUpdate) return 'You cannot update this action plan.';
     final validation = validateProofImage(mimeType: mimeType, sizeBytes: sizeBytes);
@@ -142,6 +145,8 @@ class ActionPlanDetailController extends StateNotifier<ActionPlanDetailState> {
         id: planId,
         filePath: filePath,
         fileName: fileName,
+        mimeType: mimeType,
+        bytes: bytes,
       );
       state = state.copyWith(
         proofImages: [...state.proofImages, image],
